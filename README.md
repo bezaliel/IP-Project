@@ -3,10 +3,10 @@ Capture the Flag Game
 
 gcc tilemap.c -o tilemap -lallegro -lallegro_image -lallegro_primitives -lm
 
-WASD to move the red square
+WASD para mover o quadrado vermelho
 
-Q to enter in a manhole
+Q para dropar a bandeira
 
-E to suicide(Drop Flag tests)
+E para entrar no bueiro
 
-Left Mouse button to fire
+Botão esquerdo do mouse para atirar
