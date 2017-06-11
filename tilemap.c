@@ -12,6 +12,7 @@
 #define TILE_SIZE 32
 #define FPS 60
 #define NTREES 4
+#define NROCKS 2
 #define NHOLES 4
 #define NFLAGS 2
 #define NBULLETS 10
@@ -21,8 +22,17 @@
 enum TileMapObjects {WALL = 2, TREE, ROCK, MANHOLE_IN, MANHOLE_OUT, FLAG_1, FLAG_2};
 enum Teams{TEAM_1, TEAM_2};
 enum Movements {UP, DOWN, LEFT, RIGHT};
-enum Actions {FIRE, HOLE, SUICIDE};
-typedef struct {
+enum Actions {FIRE, HOLE_IN, DROP_FLAG};
+typedef struct{
+	float x;
+	float y;
+} Point;
+typedef struct{
+	float module;
+	float dx;
+	float dy;
+} Vector;
+typedef struct{
 	int id;
 	int team;
 	int live;
@@ -30,47 +40,47 @@ typedef struct {
 	int deaths;
 	bool has_team_flag;
 	bool has_enemy_flag;
-	float x;
-	float y;
-	float speed;
-	float speed_component;
+	
+	float speed_orto;
+	float speed_diag;
+	Point position;
 } Player;
 
 typedef struct{
-	int src_l;
-	int src_c;
-} Tree;
-typedef struct{
-	int src_l;
-	int src_c;
+	int l;
+	int c;
 	int type;
-} ManHole;
+} TileObject;
 
 typedef struct{
-	float pos_x;
-	float pos_y;
-	float dx;
-	float dy;
-	int counter;
-	bool live;
+	int live;
+	Vector speed;
+	Point position;
 } Bullet;
 
 typedef struct{
 	int src_l;
 	int src_c;
-	int current_l;
-	int current_c;
 	bool has_catched;
+	TileObject tile;
 } Flag;
 
+//Objetos da tile simples
+TileObject trees[NTREES];
+TileObject rocks[NROCKS];
+TileObject manholes_in[NHOLES/2];
+TileObject manholes_out[NHOLES/2];
+
+//Objetos da tile avançados
 Flag flags[NFLAGS];
-Tree trees[NTREES];
-ManHole holes[NHOLES];
+
+//Projéteis
 Bullet bullets[NBULLETS];
 
-ALLEGRO_BITMAP *hole_out = NULL;
-ALLEGRO_BITMAP *hole_in = NULL;
-ALLEGRO_BITMAP *tree = NULL;
+ALLEGRO_BITMAP *bitmap_tree = NULL;
+ALLEGRO_BITMAP *bitmap_rock = NULL;
+ALLEGRO_BITMAP *bitmap_manhole_in = NULL;
+ALLEGRO_BITMAP *bitmap_manhole_out = NULL;
 
 //Funções do Tile map
 int loadTileMapMatrix(char *map, int l, int c);
@@ -92,17 +102,20 @@ int catchEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_tea
 int catchTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team);
 int dropEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team);
 int dropTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team);
-int hasManHole(char *map, int l, int c, int pos_x, int pos_y);
+
+int hasManHoleIn(char *map, int l, int c, int pos_x, int pos_y);
 
 void processBullets(char *map, int l, int c);
-void fireBullet(float dx, float dy, float pos_x, float pos_y);
-void drawBullets();
+void fireBullet(Vector *vector, float pos_x, float pos_y);
 
 //Desenhar tiles individuais
+void drawTrees();
+void drawRocks();
 void drawFlags();
 void drawHolesIn();
 void drawHolesOut();
-void drawTrees();
+
+void drawBullets();
 
 int main(){
 	register int i;
@@ -129,18 +142,12 @@ int main(){
     al_clear_to_color(al_map_rgb(0, 0, 0));
     
     //Desenhar mapa estático
-    ALLEGRO_BITMAP *background = al_load_bitmap("tilemap.png");
+    ALLEGRO_BITMAP *background = al_load_bitmap("map.png");
     
-    hole_out = al_load_bitmap("hole_out.png");
-	hole_in = al_load_bitmap("hole_in.png");
-	tree = al_load_bitmap("tree.png");
-	
-	ALLEGRO_BITMAP *tiles = al_create_bitmap(TILEMAP_WIDTH, TILEMAP_HEIGHT);
-	al_set_target_bitmap(tiles);
-	al_clear_to_color(al_map_rgba(0, 0, 0, 0));
-	al_draw_bitmap(background, 0, 0, 0);
-	al_set_target_backbuffer(display);
-   	al_draw_bitmap(tiles, 0, 0, 0);
+    bitmap_tree = al_load_bitmap("tree.png");
+	bitmap_rock = al_load_bitmap("rock.png");
+    bitmap_manhole_out = al_load_bitmap("manhole_out.png");
+	bitmap_manhole_in = al_load_bitmap("manhole_in.png");
     
     //Criar timer
     timer = al_create_timer(1.0 / FPS);
@@ -156,15 +163,19 @@ int main(){
     al_start_timer(timer);
     
     
-    float mouse_x, mouse_y, dx, dy, hip, w, h;
+    float mouse_x, mouse_y, module, w, h;
     bool dir[] = {0, 0, 0, 0};
     bool actions[] = {0, 0, 0};
+    int flag_drop_timer = 0;
+    
     Player *player = (Player *) malloc(sizeof(Player));
     spawnPlayer(player, 0, TEAM_1, 32*4+16, 48);
     Player *player_team = (Player *) malloc(sizeof(Player)*4);
     Player *enemy_team = (Player *) malloc(sizeof(Player)*5);
+    
     ALLEGRO_TRANSFORM transform;
     ALLEGRO_EVENT event;
+    Vector vector;
   	while(run){
   		w = al_get_display_width(display);
 		h = al_get_display_height(display);
@@ -181,29 +192,29 @@ int main(){
 			if(event.keyboard.keycode == ALLEGRO_KEY_S) dir[DOWN] = 1;
 			if(event.keyboard.keycode == ALLEGRO_KEY_A) dir[LEFT] = 1;
 			if(event.keyboard.keycode == ALLEGRO_KEY_D) dir[RIGHT] = 1;
-			if(event.keyboard.keycode == ALLEGRO_KEY_Q) actions[HOLE] = 1;
-			if(event.keyboard.keycode == ALLEGRO_KEY_E) actions[SUICIDE] = 1;
+			if(event.keyboard.keycode == ALLEGRO_KEY_E) actions[HOLE_IN] = 1;
+			if(event.keyboard.keycode == ALLEGRO_KEY_Q) actions[DROP_FLAG] = 1;
 		}
 		if (event.type == ALLEGRO_EVENT_KEY_UP){
 			if(event.keyboard.keycode == ALLEGRO_KEY_W) dir[UP] = 0;
 			if(event.keyboard.keycode == ALLEGRO_KEY_S) dir[DOWN] = 0;
 			if(event.keyboard.keycode == ALLEGRO_KEY_A) dir[LEFT] = 0;
 			if(event.keyboard.keycode == ALLEGRO_KEY_D) dir[RIGHT] = 0;
-			if(event.keyboard.keycode == ALLEGRO_KEY_Q) actions[HOLE] = 0;
-			if(event.keyboard.keycode == ALLEGRO_KEY_E) actions[SUICIDE] = 0;
+			if(event.keyboard.keycode == ALLEGRO_KEY_E) actions[HOLE_IN] = 0;
+			if(event.keyboard.keycode == ALLEGRO_KEY_Q) actions[DROP_FLAG] = 0;
 		}
 		
 		//Capturar botão esquerdo do mouse
 		if (event.type == ALLEGRO_EVENT_MOUSE_BUTTON_DOWN) {
 			if(event.mouse.button == 1){
-				mouse_x = event.mouse.x + player->x - w*0.5;
-				mouse_y = event.mouse.y + player->y - h*0.5;
-				dx = mouse_x - player->x;
-				dy = mouse_y - player->y;
-				hip = sqrt(dx*dx+dy*dy);
-				dx = BULLET_SPEED / (hip/dx);
-				dy = BULLET_SPEED / (hip/dy);
-				fireBullet(dx, dy, player->x, player->y);
+				//Reverter transformação player_x + w/2
+				mouse_x = event.mouse.x - w*0.5;
+				mouse_y = event.mouse.y - h*0.5;
+				module = sqrt(mouse_x*mouse_x+mouse_y*mouse_y);
+				vector.dx = BULLET_SPEED / (module/mouse_x);
+				vector.dy = BULLET_SPEED / (module/mouse_y);
+				vector.module = BULLET_SPEED;
+				fireBullet(&vector, player->position.x, player->position.y);
 				//showTileContent(getTileContent(map, l, c, mouse_x, mouse_y));
 			}
 		}
@@ -211,66 +222,75 @@ int main(){
 		//Evento de timer: processar e redesenhar
 		if (event.type == ALLEGRO_EVENT_TIMER){
 			if(dir[UP]){
-				dx = 0, dy = -player->speed_component;
+				vector.dx = 0, vector.dy = -player->speed_diag;
 				if(dir[LEFT]){
-					dx -= player->speed_component;
+					vector.dx -= player->speed_diag;
 				}else if(dir[RIGHT]){
-					dx += player->speed_component;
+					vector.dx += player->speed_diag;
 				}else{
-					dy = -player->speed;
+					vector.dy = -player->speed_orto;
 				}
-				if(isWalkable(map, l, c, player->x + dx, player->y + dy)){
-					player->x+=dx, player->y += dy;
+				if(isWalkable(map, l, c, player->position.x + vector.dx, player->position.y + vector.dy)){
+					player->position.x += vector.dx, player->position.y += vector.dy;
 				}
 			}else if(dir[DOWN]){
-				dx = 0, dy = player->speed_component;
+				vector.dx = 0, vector.dy = player->speed_diag;
 				if(dir[LEFT]){
-					dx -= player->speed_component;
+					vector.dx -= player->speed_diag;
 				}else if(dir[RIGHT]){
-					dx += player->speed_component;
+					vector.dx += player->speed_diag;
 				}else{
-					dy = +player->speed;
+					vector.dy = +player->speed_orto;
 				}
-				if(isWalkable(map, l, c, player->x + dx, player->y + dy)){
-					player->x+=dx, player->y += dy;
+				if(isWalkable(map, l, c, player->position.x + vector.dx, player->position.y + vector.dy)){
+					player->position.x += vector.dx, player->position.y += vector.dy;
 				}
 			}else if(dir[LEFT]){
-				if(isWalkable(map, l, c, player->x - player->speed, player->y))
-					player->x -= player->speed;
+				if(isWalkable(map, l, c, player->position.x - player->speed_orto, player->position.y))
+					player->position.x -= player->speed_orto;
 			}else if(dir[RIGHT]){
-				if(isWalkable(map, l, c, player->x + player->speed, player->y))
-					player->x += player->speed;
+				if(isWalkable(map, l, c, player->position.x + player->speed_orto, player->position.y))
+					player->position.x += player->speed_orto;
 			}
 			//collisionDetecion(player);
 			if(player->live > 0){
-				if(!player->has_team_flag){
-					player->has_team_flag = catchTeamFlag(map, l, c, player->x, player->y, player->team);
-					if(player->has_team_flag){
-						printf("Catched Team flag!\n");
+				if(!flag_drop_timer){
+					if(!player->has_team_flag){
+						player->has_team_flag = catchTeamFlag(map, l, c, player->position.x, player->position.y, player->team);
+						if(player->has_team_flag){
+							printf("Catched Team flag!\n");
+						}
 					}
-				}
-				if(!player->has_enemy_flag){
-					player->has_enemy_flag = catchEnemyFlag(map, l, c, player->x, player->y, player->team);
-					if(player->has_enemy_flag){
-						printf("Catched Enemy flag!\n");
+					if(!player->has_enemy_flag){
+						player->has_enemy_flag = catchEnemyFlag(map, l, c, player->position.x, player->position.y, player->team);
+						if(player->has_enemy_flag){
+							printf("Catched Enemy flag!\n");
+						}
 					}
+				}else{
+					flag_drop_timer--;
 				}
-				if(actions[HOLE] && hasManHole(map, l, c, player->x, player->y)){
-					if(player->x < TILEMAP_WIDTH/2){
-						player->x = 11*32;
-						player->y = 13*32;
+				if(actions[HOLE_IN] && hasManHoleIn(map, l, c, player->position.x, player->position.y)){
+					if(player->position.x < TILEMAP_WIDTH/2){
+						player->position.x = 11*32;
+						player->position.y = 13*32;
 					}else{
-						player->x = TILEMAP_WIDTH-11*32;
-						player->y = 13*32;
+						player->position.x = TILEMAP_WIDTH-11*32;
+						player->position.y = 13*32;
 					}
 				}
-				if(actions[SUICIDE]) player->live = 0;
+				if(actions[DROP_FLAG]){
+					if(player->has_team_flag)
+						player->has_team_flag = dropTeamFlag(map, l, c, player->position.x, player->position.y, player->team);
+					if(player->has_enemy_flag)
+						player->has_enemy_flag = dropEnemyFlag(map, l, c, player->position.x, player->position.y, player->team);
+					flag_drop_timer = 120;
+				}
 			}else{
 				if(player->has_team_flag)
-					player->has_team_flag = dropTeamFlag(map, l, c, player->x, player->y, player->team);
+					player->has_team_flag = dropTeamFlag(map, l, c, player->position.x, player->position.y, player->team);
 				if(player->has_enemy_flag)
-					player->has_enemy_flag = dropEnemyFlag(map, l, c, player->x, player->y, player->team);
-				respawnPlayer(player);
+					player->has_enemy_flag = dropEnemyFlag(map, l, c, player->position.x, player->position.y, player->team);
 			}
 			processBullets(map, l, c);
 			redraw = true;
@@ -279,23 +299,24 @@ int main(){
 		if (redraw && al_is_event_queue_empty(queue)) {
 			redraw = false;
 			al_identity_transform(&transform);
-			al_translate_transform(&transform, -(player->x), -(player->y));
+			al_translate_transform(&transform, -(player->position.x), -(player->position.y));
 			al_translate_transform(&transform, w * 0.5, h * 0.5);
 			al_use_transform(&transform);
 			al_clear_to_color(al_map_rgb(0, 0, 0));
 			al_draw_bitmap(background, 0, 0, 0);
 			drawHolesIn();
-			al_draw_filled_rectangle(player->x, player->y, player->x + 10, player->y + 10, al_map_rgb(255, 10, 26));
+			al_draw_filled_rectangle(player->position.x, player->position.y, player->position.x + 10, player->position.y + 10, al_map_rgb(255, 10, 26));
+			drawTrees();
+			drawRocks();
 			drawHolesOut();
 			drawFlags();
-			drawTrees();
 			drawBullets();
 			al_flip_display();
 		}
     }
     
     //Destruir objetos
-    al_destroy_bitmap(tiles);
+    //al_destroy_bitmap(tiles);
     al_destroy_bitmap(background);
     al_destroy_event_queue(queue);
     al_destroy_timer(timer);
@@ -304,7 +325,7 @@ int main(){
 
 //Ler tilemap de arquivo de texto
 int loadTileMapMatrix(char *map, int l, int c){
-	register int i, t = 0, h = 0;
+	register int i, t = 0, r = 0, hin = 0, hout = 0;
 	char b;
 	FILE *file = fopen("tilemap.txt", "r");
 	for(i = 0; i < l*c; i++){
@@ -316,25 +337,35 @@ int loadTileMapMatrix(char *map, int l, int c){
 			b-='0';
 		}
 		if(b == FLAG_1){
-			flags[0].current_l = flags[0].src_l = i/c;
-			flags[0].current_c = flags[0].src_c = i%c;
+			flags[0].tile.l = flags[0].src_l = i/c;
+			flags[0].tile.c = flags[0].src_c = i%c;
+			flags[0].tile.type = b;
 			flags[0].has_catched = 0;
-		}
-		if(b == FLAG_2){
-			flags[1].current_l = flags[1].src_l = i/c;
-			flags[1].current_c = flags[1].src_c = i%c;
+		}else if(b == FLAG_2){
+			flags[1].tile.l = flags[1].src_l = i/c;
+			flags[1].tile.c = flags[1].src_c = i%c;
+			flags[1].tile.type = b;
 			flags[1].has_catched = 0;
-		}
-		if(b == TREE){
-			trees[t].src_l = i/c;
-			trees[t].src_c = i%c;
+		}else if(b == TREE){
+			trees[t].l = i/c;
+			trees[t].c = i%c;
+			trees[t].type = b;
 			t++;
-		}
-		if(b == MANHOLE_IN || b == MANHOLE_OUT){
-			holes[h].src_l = i/c;
-			holes[h].src_c = i%c;
-			holes[h].type = b;
-			h++;
+		}else if(b == ROCK){
+			rocks[r].l = i/c;
+			rocks[r].c = i%c;
+			rocks[r].type = b;
+			r++;
+		}else if(b == MANHOLE_IN){
+			manholes_in[hin].l = i/c;
+			manholes_in[hin].c = i%c;
+			manholes_in[hin].type = b;
+			hin++;
+		}else if(b == MANHOLE_OUT){
+			manholes_out[hout].l = i/c;
+			manholes_out[hout].c = i%c;
+			manholes_out[hout].type = b;
+			hout++;
 		}
 		*(map+i) = b;
 	}
@@ -356,26 +387,27 @@ void processBullets(char *map, int l, int c){
 	register int i;
 	for(i = 0; i < NBULLETS; i++){
 		if(bullets[i].live){
-			bullets[i].pos_x += bullets[i].dx;
-			bullets[i].pos_y += bullets[i].dy;
-			if(bullets[i].counter > 50 || !isPassable(map, l, c, bullets[i].pos_x, bullets[i].pos_y)){
+			bullets[i].position.x += bullets[i].speed.dx;
+			bullets[i].position.y += bullets[i].speed.dy;
+			if(!isPassable(map, l, c, bullets[i].position.x, bullets[i].position.y)){
 				bullets[i].live = 0;
+			}else{
+				bullets[i].live--;
 			}
-			bullets[i].counter++;
 		}
 	}
 }
 //Lançar projétil
-void fireBullet(float dx, float dy, float pos_x, float pos_y){
+void fireBullet(Vector *vector, float pos_x, float pos_y){
 	register int i;
 	for(i = 0; i < NBULLETS; i++){
 		if(!bullets[i].live){
-			bullets[i].pos_x = pos_x;
-			bullets[i].pos_y = pos_y;
-			bullets[i].dx = dx;
-			bullets[i].dy = dy;
-			bullets[i].live = 1;
-			bullets[i].counter = 0;
+			bullets[i].position.x = pos_x;
+			bullets[i].position.y = pos_y;
+			bullets[i].speed.module = vector->module;
+			bullets[i].speed.dx = vector->dx;
+			bullets[i].speed.dy = vector->dy;
+			bullets[i].live = 50;
 			break;
 		}
 	}
@@ -387,8 +419,8 @@ void drawFlags(){
 	ALLEGRO_COLOR flag_colors[2] = {al_map_rgb(255, 10, 26), al_map_rgb(100, 10, 26)};
 	for(i = 0; i < NFLAGS; i++){
 		if(!flags[i].has_catched){
-			pos_x = flags[i].current_c*32+16;
-			pos_y = flags[i].current_l*32+16;
+			pos_x = flags[i].tile.c*32+16;
+			pos_y = flags[i].tile.l*32+16;
 			al_draw_filled_circle(pos_x, pos_y, 10, flag_colors[i]);
 		}
 	}
@@ -398,7 +430,7 @@ void drawBullets(){
 	register int i;
 	for(i = 0; i < NBULLETS; i++){
 		if(bullets[i].live){
-			al_draw_filled_circle(bullets[i].pos_x, bullets[i].pos_y, 2, al_map_rgb(255, 10, 26));
+			al_draw_filled_circle(bullets[i].position.x, bullets[i].position.y, 2, al_map_rgb(255, 10, 26));
 		}
 	}
 }
@@ -407,33 +439,38 @@ void drawTrees(){
 	register int i;
 	int pos_x, pos_y;
 	for(i = 0; i < NTREES; i++){
-		pos_x = trees[i].src_c*32-16;
-		pos_y = trees[i].src_l*32-16;
-		al_draw_bitmap(tree, pos_x, pos_y, 0);
+		pos_x = trees[i].c*32-16;
+		pos_y = trees[i].l*32-16;
+		al_draw_bitmap(bitmap_tree, pos_x, pos_y, 0);
+	}
+}
+void drawRocks(){
+	register int i;
+	int pos_x, pos_y;
+	for(i = 0; i < NROCKS; i++){
+		pos_x = rocks[i].c*32-16;
+		pos_y = rocks[i].l*32-16;
+		al_draw_bitmap(bitmap_rock, pos_x, pos_y, 0);
 	}
 }
 //Desenhar entradas de bueiros
 void drawHolesIn(){
 	register int i;
 	int pos_x, pos_y;
-	for(i = 0; i < NHOLES; i++){
-		pos_x = holes[i].src_c*32;
-		pos_y = holes[i].src_l*32;
-		if(holes[i].type == MANHOLE_IN){
-			al_draw_bitmap(hole_in, pos_x, pos_y, 0);
-		}
+	for(i = 0; i < NHOLES/2; i++){
+		pos_x = manholes_in[i].c*32;
+		pos_y = manholes_in[i].l*32;
+		al_draw_bitmap(bitmap_manhole_in, pos_x, pos_y, 0);
 	}
 }
 //Desenhar saídas de bueiros
 void drawHolesOut(){
 	register int i;
 	int pos_x, pos_y;
-	for(i = 0; i < NHOLES; i++){
-		pos_x = holes[i].src_c*32-32;
-		pos_y = holes[i].src_l*32-64;
-		if(holes[i].type == MANHOLE_OUT){
-			al_draw_bitmap(hole_out, pos_x, pos_y, 0);
-		}
+	for(i = 0; i < NHOLES/2; i++){
+		pos_x = manholes_out[i].c*32-32;
+		pos_y = manholes_out[i].l*32-64;
+		al_draw_bitmap(bitmap_manhole_out, pos_x, pos_y, 0);
 	}
 }
 //Verificar se é uma posição acessível ao player
@@ -460,48 +497,6 @@ int isPassable(char *map, int l, int c, int pos_x, int pos_y){
 	return 1;
 }
 
-
-void showTileContent(int tile_object_id){
-	switch(tile_object_id){
-		case !WALKABLE:{
-			printf("NO WALLKABLE PLACE.\n");
-			break;
-		}
-		case WALKABLE:{
-			printf("WALLKABLE PLACE.\n");
-			break;
-		}
-		case WALL:{
-			printf("WALL.\n");
-			break;
-		}
-		case TREE:{
-			printf("TREE.\n");
-			break;
-		}
-		case ROCK:{
-			printf("ROCK.\n");
-			break;
-		}
-		case MANHOLE_IN:{
-			printf("MANHOLE IN.\n");
-			break;
-		}
-		case MANHOLE_OUT:{
-			printf("MANHOLE OUT.\n");
-			break;
-		}
-		case FLAG_1:{
-			printf("FLAG_1.\n");
-			break;
-		}
-		case FLAG_2:{
-			printf("FLAG 2.\n");
-			break;
-		}
-	}
-}
-
 // Verificar o que há na tile pela posição
 int getTileContent(char *map, int l, int c, int pos_x, int pos_y){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
@@ -517,22 +512,22 @@ void spawnPlayer(Player *player, int id, int team, int x, int y){
 	//Informações serão atribuídas pelo servidor
 	player->id = id;
 	player->team = team;
-	player->x = x;
-	player->y = y;
+	player->position.x = x;
+	player->position.y = y;
 	player->live = 100;
 	player->has_team_flag = 0;
 	player->has_enemy_flag = 0;
-	player->speed = 2;
-	player->speed_component = sqrt(player->speed)/1.4142135;
+	player->speed_orto = 2;
+	player->speed_diag = sqrt(player->speed_orto)/1.4142135;
 	player->kills = player->deaths = 0;
 }
 void respawnPlayer(Player *player){
 	if(player->team == TEAM_1){
-		player->x = 48;
-		player->y = 48;
+		player->position.x = 48;
+		player->position.y = 48;
 	}else{
-		player->x = TILEMAP_WIDTH-48;
-		player->y = TILEMAP_HEIGHT-48;
+		player->position.x = TILEMAP_WIDTH-48;
+		player->position.y = TILEMAP_HEIGHT-48;
 	}
 	player->live = 100;
 }
@@ -551,7 +546,7 @@ int catchEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_tea
 //Capturar bandeira do time
 int catchTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int team_flag = (player_team == TEAM_1) ? FLAG_1 : FLAG_2;
-	if(flags[team_flag-FLAG_1].current_l != flags[team_flag-FLAG_1].src_l && flags[team_flag-FLAG_1].current_c != flags[team_flag-FLAG_1].src_c){
+	if(flags[team_flag-FLAG_1].tile.l != flags[team_flag-FLAG_1].src_l && flags[team_flag-FLAG_1].tile.c != flags[team_flag-FLAG_1].src_c){
 		if(getTileContent(map, l, c, pos_x, pos_y) == team_flag){
 			flags[team_flag-FLAG_1].has_catched = 1;
 			setTileContent(map, l, c, pos_x, pos_y, WALKABLE);
@@ -565,8 +560,8 @@ int catchTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team
 int dropEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
 	int enemy_flag = (player_team == TEAM_1) ? FLAG_2 : FLAG_1;
-	flags[enemy_flag-FLAG_1].current_l = pos_l;
-	flags[enemy_flag-FLAG_1].current_c = pos_c;
+	flags[enemy_flag-FLAG_1].tile.l = pos_l;
+	flags[enemy_flag-FLAG_1].tile.c = pos_c;
 	flags[enemy_flag-FLAG_1].has_catched = 0;
 	setTileContent(map, l, c, pos_x, pos_y, enemy_flag);
 	return 0;
@@ -576,14 +571,14 @@ int dropEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team
 int dropTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
 	int team_flag = (player_team == TEAM_1) ? FLAG_1 : FLAG_2;
-	flags[team_flag-FLAG_1].current_l = pos_l;
-	flags[team_flag-FLAG_1].current_c = pos_c;
+	flags[team_flag-FLAG_1].tile.l = pos_l;
+	flags[team_flag-FLAG_1].tile.c = pos_c;
 	flags[team_flag-FLAG_1].has_catched = 0;
 	setTileContent(map, l, c, pos_x, pos_y, team_flag);
 	return 0;
 }
 // Verificar se tem um bueiro
-int hasManHole(char *map, int l, int c, int pos_x, int pos_y){
+int hasManHoleIn(char *map, int l, int c, int pos_x, int pos_y){
 	if(getTileContent(map, l, c, pos_x, pos_y) == MANHOLE_IN) return 1;
 	return 0;
 }
