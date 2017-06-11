@@ -306,11 +306,11 @@ int main(){
 			al_draw_bitmap(background, 0, 0, 0);
 			drawHolesIn();
 			al_draw_filled_rectangle(player->position.x, player->position.y, player->position.x + 10, player->position.y + 10, al_map_rgb(255, 10, 26));
+			drawBullets();
 			drawTrees();
 			drawRocks();
 			drawHolesOut();
 			drawFlags();
-			drawBullets();
 			al_flip_display();
 		}
     }
@@ -449,7 +449,7 @@ void drawRocks(){
 	int pos_x, pos_y;
 	for(i = 0; i < NROCKS; i++){
 		pos_x = rocks[i].c*32-16;
-		pos_y = rocks[i].l*32-16;
+		pos_y = rocks[i].l*32-32;
 		al_draw_bitmap(bitmap_rock, pos_x, pos_y, 0);
 	}
 }
@@ -559,23 +559,29 @@ int catchTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team
 // Soltar bandeira inimiga na tile
 int dropEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
-	int enemy_flag = (player_team == TEAM_1) ? FLAG_2 : FLAG_1;
-	flags[enemy_flag-FLAG_1].tile.l = pos_l;
-	flags[enemy_flag-FLAG_1].tile.c = pos_c;
-	flags[enemy_flag-FLAG_1].has_catched = 0;
-	setTileContent(map, l, c, pos_x, pos_y, enemy_flag);
-	return 0;
+	if(getTileContent(map, l, c, pos_x, pos_y) == WALKABLE){
+		int enemy_flag = (player_team == TEAM_1) ? FLAG_2 : FLAG_1;
+		flags[enemy_flag-FLAG_1].tile.l = pos_l;
+		flags[enemy_flag-FLAG_1].tile.c = pos_c;
+		flags[enemy_flag-FLAG_1].has_catched = 0;
+		setTileContent(map, l, c, pos_x, pos_y, enemy_flag);
+		return 0;
+	}
+	return 1;
 }
 
 // Soltar bandeira do time na tile
 int dropTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
-	int team_flag = (player_team == TEAM_1) ? FLAG_1 : FLAG_2;
-	flags[team_flag-FLAG_1].tile.l = pos_l;
-	flags[team_flag-FLAG_1].tile.c = pos_c;
-	flags[team_flag-FLAG_1].has_catched = 0;
-	setTileContent(map, l, c, pos_x, pos_y, team_flag);
-	return 0;
+	if(getTileContent(map, l, c, pos_x, pos_y) == WALKABLE){
+		int team_flag = (player_team == TEAM_1) ? FLAG_1 : FLAG_2;
+		flags[team_flag-FLAG_1].tile.l = pos_l;
+		flags[team_flag-FLAG_1].tile.c = pos_c;
+		flags[team_flag-FLAG_1].has_catched = 0;
+		setTileContent(map, l, c, pos_x, pos_y, team_flag);
+		return 0;
+	}
+	return 1;
 }
 // Verificar se tem um bueiro
 int hasManHoleIn(char *map, int l, int c, int pos_x, int pos_y){
