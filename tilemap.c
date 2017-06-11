@@ -10,6 +10,8 @@
 #define TILEMAP_WIDTH 1024
 #define TILE_SIZE 32
 #define FPS 60
+#define NTREES 4
+#define NFLAGS 2
 
 #define WALKABLE 1
 enum TileMapObjects {WALL = 2, TREE, ROCK, MANHOLE_IN, MANHOLE_OUT, FLAG_1, FLAG_2};
@@ -32,19 +34,26 @@ typedef struct {
 typedef struct{
 	int src_l;
 	int src_c;
+} Tree;
+
+typedef struct{
+	int src_l;
+	int src_c;
 	int current_l;
 	int current_c;
 	bool has_catched;
 } Flag;
-Flag flag[2];
-// Funções do Tile map
+Flag flags[NFLAGS];
+Tree trees[NTREES];
+
+//Funções do Tile map
 int loadTileMapMatrix(char *map, int l, int c);
 int showTileMapMatrix(char *map, int l, int c);
 int getTileContent(char *map, int l, int c, int pos_x, int pos_y);
 void setTileContent(char *map, int l, int c, int pos_x, int pos_y, int tile_id);
 void showTileContent(int tile_object_id);
 
-// Validar movimentos
+//Validar movimentos
 int isWalkable(char *map, int l, int c, int pos_x, int pos_y);
 int isPassable(char *map, int l, int c, int pos_x, int pos_y);
 
@@ -52,13 +61,16 @@ int isPassable(char *map, int l, int c, int pos_x, int pos_y);
 void spawnPlayer(Player *player, int id, int team, int x, int y);
 void respawnPlayer(Player *player);
 
-// Flag
+//Flag
 int catchEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team);
 int catchTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team);
 int dropEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team);
 int dropTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team);
 int hasManHole(char *map, int l, int c, int pos_x, int pos_y);
+
+//Desenhar tiles individuais
 void drawFlags();
+void drawTrees();
 
 int main(){
 	register int i;
@@ -212,6 +224,7 @@ int main(){
 			al_draw_bitmap(background, 0, 0, 0);
 			al_draw_filled_rectangle(player->x, player->y, player->x + 10, player->y + 10, al_map_rgb(255, 10, 26));
 			drawFlags();
+			drawTrees();
 			al_flip_display();
 		}
     }
@@ -226,7 +239,7 @@ int main(){
 
 //Ler tilemap de arquivo de texto
 int loadTileMapMatrix(char *map, int l, int c){
-	register int i, j;
+	register int i, t = 0;
 	char b;
 	FILE *file = fopen("tilemap.txt", "r");
 	for(i = 0; i < l*c; i++){
@@ -238,14 +251,19 @@ int loadTileMapMatrix(char *map, int l, int c){
 			b-='0';
 		}
 		if(b == FLAG_1){
-			flag[0].current_l = flag[0].src_l = i/c;
-			flag[0].current_c = flag[0].src_c = i%c;
-			flag[0].has_catched = 0;
+			flags[0].current_l = flags[0].src_l = i/c;
+			flags[0].current_c = flags[0].src_c = i%c;
+			flags[0].has_catched = 0;
 		}
 		if(b == FLAG_2){
-			flag[1].current_l = flag[1].src_l = i/c;
-			flag[1].current_c = flag[1].src_c = i%c;
-			flag[1].has_catched = 0;
+			flags[1].current_l = flags[1].src_l = i/c;
+			flags[1].current_c = flags[1].src_c = i%c;
+			flags[1].has_catched = 0;
+		}
+		if(b == TREE){
+			trees[t].src_l = i/c;
+			trees[t].src_c = i%c;
+			t++;
 		}
 		*(map+i) = b;
 	}
@@ -268,11 +286,20 @@ void drawFlags(){
 	int pos_x, pos_y;
 	ALLEGRO_COLOR flag_colors[2] = {al_map_rgb(255, 10, 26), al_map_rgb(100, 10, 26)};
 	for(i = 0; i < 2; i++){
-		if(!flag[i].has_catched){
-			pos_x = flag[i].current_c*32+16;
-			pos_y = flag[i].current_l*32+16;
+		if(!flags[i].has_catched){
+			pos_x = flags[i].current_c*32+16;
+			pos_y = flags[i].current_l*32+16;
 			al_draw_filled_circle(pos_x, pos_y, 10, flag_colors[i]);
 		}
+	}
+}
+void drawTrees(){
+	register int i;
+	int pos_x, pos_y;
+	for(i = 0; i < NTREES; i++){
+		pos_x = trees[i].src_c*32+16;
+		pos_y = trees[i].src_l*32+16;
+		al_draw_filled_circle(pos_x, pos_y, 16, al_map_rgb(200, 125, 25));
 	}
 }
 //Verificar se é uma posição acessível ao player
@@ -331,7 +358,7 @@ void showTileContent(int tile_object_id){
 			break;
 		}
 		case FLAG_1:{
-			printf("FLAG 1.\n");
+			printf("FLAG_1.\n");
 			break;
 		}
 		case FLAG_2:{
@@ -346,6 +373,8 @@ int getTileContent(char *map, int l, int c, int pos_x, int pos_y){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
 	return *(map+(pos_l*c+pos_c));
 }
+
+// Atribuir valor a tile pela posição
 void setTileContent(char *map, int l, int c, int pos_x, int pos_y, int tile_id){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
 	*(map+(pos_l*c+pos_c)) = tile_id;
@@ -363,7 +392,6 @@ void spawnPlayer(Player *player, int id, int team, int x, int y){
 	player->kills = player->deaths = 0;
 }
 void respawnPlayer(Player *player){
-	//Informações serão atribuídas pelo servidor
 	if(player->team == TEAM_1){
 		player->x = 48;
 		player->y = 48;
@@ -378,7 +406,8 @@ void respawnPlayer(Player *player){
 int catchEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int enemy_flag = (player_team == TEAM_1) ? FLAG_2 : FLAG_1;
 	if(getTileContent(map, l, c, pos_x, pos_y) == enemy_flag){
-		flag[enemy_flag-FLAG_1].has_catched = 1;
+		flags[enemy_flag-FLAG_1].has_catched = 1;
+		setTileContent(map, l, c, pos_x, pos_y, WALKABLE);
 		return 1;
 	}
 	return 0;
@@ -387,9 +416,10 @@ int catchEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_tea
 //Capturar bandeira do time
 int catchTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int team_flag = (player_team == TEAM_1) ? FLAG_1 : FLAG_2;
-	if(flag[team_flag-FLAG_1].current_l != flag[team_flag-FLAG_1].src_l && flag[team_flag-FLAG_1].current_c != flag[team_flag-FLAG_1].src_c){
+	if(flags[team_flag-FLAG_1].current_l != flags[team_flag-FLAG_1].src_l && flags[team_flag-FLAG_1].current_c != flags[team_flag-FLAG_1].src_c){
 		if(getTileContent(map, l, c, pos_x, pos_y) == team_flag){
-			flag[team_flag-FLAG_1].has_catched = 1;
+			flags[team_flag-FLAG_1].has_catched = 1;
+			setTileContent(map, l, c, pos_x, pos_y, WALKABLE);
 			return 1;
 		}
 	}
@@ -400,9 +430,9 @@ int catchTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team
 int dropEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
 	int enemy_flag = (player_team == TEAM_1) ? FLAG_2 : FLAG_1;
-	flag[enemy_flag-FLAG_1].current_l = pos_l;
-	flag[enemy_flag-FLAG_1].current_c = pos_c;
-	flag[enemy_flag-FLAG_1].has_catched = 0;
+	flags[enemy_flag-FLAG_1].current_l = pos_l;
+	flags[enemy_flag-FLAG_1].current_c = pos_c;
+	flags[enemy_flag-FLAG_1].has_catched = 0;
 	setTileContent(map, l, c, pos_x, pos_y, enemy_flag);
 	return 0;
 }
@@ -411,9 +441,9 @@ int dropEnemyFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team
 int dropTeamFlag(char *map, int l, int c, int pos_x, int pos_y, int player_team){
 	int pos_l = pos_y/TILE_SIZE, pos_c = pos_x/TILE_SIZE;
 	int team_flag = (player_team == TEAM_1) ? FLAG_1 : FLAG_2;
-	flag[team_flag-FLAG_1].current_l = pos_l;
-	flag[team_flag-FLAG_1].current_c = pos_c;
-	flag[team_flag-FLAG_1].has_catched = 0;
+	flags[team_flag-FLAG_1].current_l = pos_l;
+	flags[team_flag-FLAG_1].current_c = pos_c;
+	flags[team_flag-FLAG_1].has_catched = 0;
 	setTileContent(map, l, c, pos_x, pos_y, team_flag);
 	return 0;
 }
